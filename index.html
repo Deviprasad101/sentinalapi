@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>NDVI Comparison – Nallamalla</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <style>
+    html,
+    body,
+    #map {
+      height: 100%;
+      margin: 0;
+    }
+
+    .legend {
+      background: white;
+      padding: 10px;
+      line-height: 18px;
+      color: #333;
+      font-size: 13px;
+      border-radius: 6px;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+    }
+
+    .legend i {
+      width: 14px;
+      height: 14px;
+      float: left;
+      margin-right: 8px;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="map"></div>
+
+  <!-- Stats Panel -->
+  <div id="stats-box" style="
+    position:absolute;
+    top:10px;
+    right:10px;
+    background:white;
+    padding:12px;
+    border-radius:8px;
+    box-shadow:0 0 8px rgba(0,0,0,0.3);
+    font-size:13px;
+    z-index:1000;
+  ">
+    <h4>Accuracy Assessment</h4>
+    <div id="stats-content">Loading...</div>
+  </div>
+
+  <script>
+    // Updated path to be relative to the root for static hosting
+    fetch("static/tiffs/stats.json")
+      .then(res => res.json())
+      .then(data => {
+        const lc = data.landcover;
+        const ndvi = data.ndvi;
+
+        let content = "";
+        if (lc.error) {
+          content += `<b>Land Cover</b><br>Error: ${lc.error}<br><br>`;
+        } else {
+          content += `
+              <b>Land Cover</b><br>
+              Overall Accuracy: ${lc.overall_accuracy}<br>
+              Kappa Coefficient: ${lc.kappa}<br><br>
+            `;
+        }
+
+        content += `
+          <b>NDVI</b><br>
+          Correlation (2022–2023): ${ndvi.correlation}<br>
+          Mean NDVI Change: ${ndvi.mean_change}<br>
+          Min NDVI Change: ${ndvi.min_change}<br>
+          Max NDVI Change: ${ndvi.max_change}
+        `;
+
+        document.getElementById("stats-content").innerHTML = content;
+      })
+      .catch(err => {
+        document.getElementById("stats-content").innerHTML = "Error loading stats";
+        console.error(err);
+      });
+  </script>
+
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- GeoRaster -->
+  <script src="https://unpkg.com/georaster/dist/georaster.browser.min.js"></script>
+  <script src="https://unpkg.com/georaster-layer-for-leaflet/dist/georaster-layer-for-leaflet.min.js"></script>
+
+  <script>
+    const map = L.map('map').setView([16.2, 79.2], 9);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap"
+    }).addTo(map);
+
+    // 🌍 Land-cover + deforestation legend
+    const legend = L.control({ position: "bottomright" });
+
+    legend.onAdd = function () {
+      const div = L.DomUtil.create("div", "legend");
+
+      div.innerHTML = `
+        <b>Land Cover / Change</b><br><br>
+
+        <i style="background:#006400"></i> Forest<br>
+        <i style="background:#7CFC00"></i> Agriculture<br>
+        <i style="background:#ff8c00"></i> Light deforestation<br>
+        <i style="background:#8b0000"></i> Heavy deforestation<br>
+        <i style="background:#808080"></i> Mining<br>
+        <i style="background:#DEB887"></i> Vacant land<br>
+      `;
+
+      return div;
+    };
+
+    legend.addTo(map);
+
+    function loadGeoTiff(url, layerName, colorFn) {
+      fetch(url)
+        .then(res => res.arrayBuffer())
+        .then(arrayBuffer => parseGeoraster(arrayBuffer))
+        .then(georaster => {
+
+          const layer = new GeoRasterLayer({
+            georaster,
+            opacity: 0.7,
+            pixelValuesToColorFn: colorFn,
+            resolution: 256
+          });
+
+          // layer.addTo(map); // Don't add all by default to avoid clutter
+          overlays[layerName] = layer;
+          layerControl.addOverlay(layer, layerName);
+
+          // Add the difference layer by default
+          if (layerName === "Land Cover") {
+            layer.addTo(map);
+            map.fitBounds(layer.getBounds());
+          }
+        })
+        .catch(console.error);
+    }
+
+    const overlays = {};
+    const layerControl = L.control.layers(null, overlays).addTo(map);
+
+    // Land Cover color class
+    function classColor(values) {
+      const v = values[0];
+      if (v === 1) return "#006400"; // Forest
+      if (v === 2) return "#7CFC00"; // Agriculture
+      if (v === 3) return "#ff8c00"; // Light deforestation
+      if (v === 6) return "#8b0000"; // Heavy deforestation
+      if (v === 4) return "#808080"; // Mining
+      if (v === 5) return "#DEB887"; // Vacant land
+      return null;
+    }
+
+    // NDVI color ramp
+    function ndviColor(values) {
+      const v = values[0];
+      if (v === null || isNaN(v)) return null;
+      if (v < 0.2) return "#d73027";
+      if (v < 0.4) return "#fc8d59";
+      if (v < 0.6) return "#fee08b";
+      if (v < 0.8) return "#91cf60";
+      return "#1a9850";
+    }
+
+    function diffColor(values) {
+      const v = values[0];
+      if (v === null || isNaN(v)) return null;
+      if (v < -0.2) return "#b2182b";
+      if (v < 0) return "#ef8a62";
+      if (v < 0.2) return "#f7f7f7";
+      return "#4dac26";
+    }
+
+    // Load TIFFs - UPDATED to relative static paths
+    loadGeoTiff("static/tiffs/landcover_classified.tif", "Land Cover", classColor);
+    loadGeoTiff("static/tiffs/ndvi_2022.tif", "NDVI 2022", ndviColor);
+    loadGeoTiff("static/tiffs/ndvi_2023.tif", "NDVI 2023", ndviColor);
+    loadGeoTiff("static/tiffs/ndvi_difference_2023_minus_2022.tif", "NDVI Change", diffColor);
+  </script>
+
+</body>
+
+</html>
