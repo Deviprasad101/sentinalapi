@@ -13,7 +13,6 @@ from sentinelhub import (
 )
 from sklearn.metrics import confusion_matrix, cohen_kappa_score, accuracy_score
 from scipy.stats import pearsonr
-import json
 
 # ---------------------------
 # Evalscript (RGB)
@@ -57,11 +56,27 @@ function evaluatePixel(s) {
 # ---------------------------
 # Load GeoJSON
 # ---------------------------
-with open(r"D:\API\boundary_nallamalla_geojson.geojson", encoding="utf-8") as f:
-    geojson = json.load(f)
+# Updated path to be relative or expect it in the same folder
+geojson_path = os.path.join(os.path.dirname(__file__), "boundary_nallamalla_geojson.geojson")
 
-geom = geojson["features"][0]["geometry"]
-geometry = Geometry(geom, CRS.WGS84)
+# Use a default if not found (or raise error, but let's assume user will provide it)
+# For now, let's keep the hardcoded path if it works for the user, OR update it to be relative.
+# The user's original script had: r"D:\API\boundary_nallamalla_geojson.geojson"
+# I should probably update it to look in the current directory if they are moving everything to git.
+if not os.path.exists(geojson_path):
+     # Fallback to the hardcoded path if relative doesn't work (for local testing compatibility)
+     geojson_path = r"D:\API\boundary_nallamalla_geojson.geojson"
+
+if os.path.exists(geojson_path):
+    with open(geojson_path, encoding="utf-8") as f:
+        geojson = json.load(f)
+
+    geom = geojson["features"][0]["geometry"]
+    geometry = Geometry(geom, CRS.WGS84)
+else:
+    print(f"⚠️ Warning: GeoJSON not found at {geojson_path}. Script might fail.")
+    # Define a dummy geometry to avoid immediate crash if just testing
+    geometry = None 
 
 # ---------------------------
 # Sentinel Hub config
@@ -73,8 +88,8 @@ config.sh_client_secret = "Pn4WxspaDOUTy5VHtqm7V4KN8GwerxsG"
 # ---------------------------
 # Output folder
 # ---------------------------
-# Point to the static/tiffs folder of the webapp
-out_dir = r"D:\API\webapp\static\tiffs"
+# Point to the static/tiffs folder relative to this script
+out_dir = os.path.join(os.path.dirname(__file__), "static", "tiffs")
 os.makedirs(out_dir, exist_ok=True)
 
 # Date ranges strategy: Find best image in March
@@ -89,31 +104,32 @@ requests_config = [
     }
 ]
 
-for req_cfg in requests_config:
-    year = req_cfg["year"]
-    time_interval = req_cfg["time_interval"]
+if geometry:
+    for req_cfg in requests_config:
+        year = req_cfg["year"]
+        time_interval = req_cfg["time_interval"]
 
-    request = SentinelHubRequest(
-        input_data=[
-            SentinelHubRequest.input_data(
-                data_collection=DataCollection.SENTINEL2_L2A,
-                time_interval=time_interval,
-                mosaicking_order="leastCC",
-                other_args={"maxcc": 0.2}
-            )
-        ],
-        geometry=geometry,
-        size=(2048, 2048),
-        responses=[
-            SentinelHubRequest.output_response("default", MimeType.TIFF)
-        ],
-        evalscript=EVALSCRIPT,
-        data_folder=out_dir,
-        config=config
-    )
+        request = SentinelHubRequest(
+            input_data=[
+                SentinelHubRequest.input_data(
+                    data_collection=DataCollection.SENTINEL2_L2A,
+                    time_interval=time_interval,
+                    mosaicking_order="leastCC",
+                    other_args={"maxcc": 0.2}
+                )
+            ],
+            geometry=geometry,
+            size=(2048, 2048),
+            responses=[
+                SentinelHubRequest.output_response("default", MimeType.TIFF)
+            ],
+            evalscript=EVALSCRIPT,
+            data_folder=out_dir,
+            config=config
+        )
 
-    request.get_data(save_data=True)
-    print(f"✅ Image downloaded for {year} (best within {time_interval})")
+        request.get_data(save_data=True)
+        print(f"✅ Image downloaded for {year} (best within {time_interval})")
 
 # ---------------------------
 # Multiband Evalscript (B02, B03, B04, B08, B11, B12)
@@ -153,100 +169,101 @@ def save_ndvi(ndvi_array, meta, out_path):
 # ---------------------------
 print("\n🌍 Starting Multi-Year Processing (2022-2023)...")
 
-for req_cfg in requests_config:
-    year = req_cfg["year"]
-    time_interval = req_cfg["time_interval"]
-    
-    print(f"\n📅 Processing Year: {year}")
+if geometry:
+    for req_cfg in requests_config:
+        year = req_cfg["year"]
+        time_interval = req_cfg["time_interval"]
+        
+        print(f"\n📅 Processing Year: {year}")
 
-    # Use a subfolder for multiband data
-    multiband_dir = os.path.join(out_dir, f"multiband_{year}")
+        # Use a subfolder for multiband data
+        multiband_dir = os.path.join(out_dir, f"multiband_{year}")
 
-    multiband_request = SentinelHubRequest(
-        input_data=[
-            SentinelHubRequest.input_data(
-                data_collection=DataCollection.SENTINEL2_L2A,
-                time_interval=time_interval,
-                mosaicking_order="leastCC",
-                other_args={"maxcc": 0.2}
-            )
-        ],
-        geometry=geometry,
-        size=(2048, 2048),
-        responses=[
-            SentinelHubRequest.output_response("default", MimeType.TIFF)
-        ],
-        evalscript=EVALSCRIPT_MULTIBAND,
-        data_folder=multiband_dir,
-        config=config
-    )
+        multiband_request = SentinelHubRequest(
+            input_data=[
+                SentinelHubRequest.input_data(
+                    data_collection=DataCollection.SENTINEL2_L2A,
+                    time_interval=time_interval,
+                    mosaicking_order="leastCC",
+                    other_args={"maxcc": 0.2}
+                )
+            ],
+            geometry=geometry,
+            size=(2048, 2048),
+            responses=[
+                SentinelHubRequest.output_response("default", MimeType.TIFF)
+            ],
+            evalscript=EVALSCRIPT_MULTIBAND,
+            data_folder=multiband_dir,
+            config=config
+        )
 
-    multiband_request.get_data(save_data=True)
+        multiband_request.get_data(save_data=True)
 
-    # Locate the file saved by Sentinel Hub
-    multiband_path = None
-    for root, _, files in os.walk(multiband_dir):
-        for file in files:
-            if file.lower().endswith(('.tif', '.tiff')):
-                multiband_path = os.path.join(root, file)
+        # Locate the file saved by Sentinel Hub
+        multiband_path = None
+        for root, _, files in os.walk(multiband_dir):
+            for file in files:
+                if file.lower().endswith(('.tif', '.tiff')):
+                    multiband_path = os.path.join(root, file)
+                    break
+            if multiband_path:
                 break
+
         if multiband_path:
-            break
-
-    if multiband_path:
-        print(f"✅ Multiband data downloaded: {multiband_path}")
-        
-        with rasterio.open(multiband_path) as src:
-            data = src.read()
-            # Bands: B02, B03, B04, B08, B11, B12
-            blue, green, red, nir, swir1, swir2 = data[0], data[1], data[2], data[3], data[4], data[5]
-            meta = src.meta.copy()
-
-        epsilon = 1e-6
-        
-        # Calculate Indices
-        ndvi = (nir - red) / (nir + red + epsilon)
-        nbr  = (nir - swir2) / (nir + swir2 + epsilon)
-        bsi  = ((swir1 + red) - (nir + blue)) / ((swir1 + red) + (nir + blue) + epsilon)
-        
-        print("✅ Indices calculated (NDVI, NBR, BSI)")
-        
-        # Save NDVI
-        ndvi_path = os.path.join(out_dir, f"ndvi_{year}.tif")
-        save_ndvi(ndvi, meta, ndvi_path)
-        print(f"💾 NDVI saved for {year}")
-
-        # Rule-Based Classification
-        classified = np.zeros(ndvi.shape, dtype=np.uint8)
-        # 1=Forest, 2=Agri, 3=Deforest, 4=Mining, 5=Vacant
-        classified[ndvi > 0.6] = 1
-        classified[(ndvi > 0.3) & (ndvi <= 0.6)] = 2
-        classified[(ndvi < 0.4) & (nbr < 0.1)] = 3
-        classified[(ndvi < 0.2) & (bsi > 0.3) & (swir1 > 0.2)] = 4
-        classified[(ndvi < 0.2) & (bsi < 0.3)] = 5
-        
-        # Save Classified GeoTIFF
-        lc_path = os.path.join(out_dir, f"landcover_{year}.tif")
-        
-        meta.update(dtype="uint8", count=1, compress="lzw", tiled=True, blockxsize=256, blockysize=256)
-
-        with rasterio.open(lc_path, "w", **meta) as dst:
-            dst.write(classified, 1)
+            print(f"✅ Multiband data downloaded: {multiband_path}")
             
-        print(f"💾 Land Cover saved: {lc_path}")
-        
-        # Compatibility copy for Web App (uses 2023)
-        if year == "2023":
-             out_path = os.path.join(out_dir, "landcover_classified.tif")
-             with rasterio.open(out_path, "w", **meta) as dst:
-                 dst.write(classified, 1)
-    else:
-        print(f"❌ Failed to find downloaded multiband TIFF for {year}")
+            with rasterio.open(multiband_path) as src:
+                data = src.read()
+                # Bands: B02, B03, B04, B08, B11, B12
+                blue, green, red, nir, swir1, swir2 = data[0], data[1], data[2], data[3], data[4], data[5]
+                meta = src.meta.copy()
+
+            epsilon = 1e-6
+            
+            # Calculate Indices
+            ndvi = (nir - red) / (nir + red + epsilon)
+            nbr  = (nir - swir2) / (nir + swir2 + epsilon)
+            bsi  = ((swir1 + red) - (nir + blue)) / ((swir1 + red) + (nir + blue) + epsilon)
+            
+            print("✅ Indices calculated (NDVI, NBR, BSI)")
+            
+            # Save NDVI
+            ndvi_path = os.path.join(out_dir, f"ndvi_{year}.tif")
+            save_ndvi(ndvi, meta, ndvi_path)
+            print(f"💾 NDVI saved for {year}")
+
+            # Rule-Based Classification
+            classified = np.zeros(ndvi.shape, dtype=np.uint8)
+            # 1=Forest, 2=Agri, 3=Deforest, 4=Mining, 5=Vacant
+            classified[ndvi > 0.6] = 1
+            classified[(ndvi > 0.3) & (ndvi <= 0.6)] = 2
+            classified[(ndvi < 0.4) & (nbr < 0.1)] = 3
+            classified[(ndvi < 0.2) & (bsi > 0.3) & (swir1 > 0.2)] = 4
+            classified[(ndvi < 0.2) & (bsi < 0.3)] = 5
+            
+            # Save Classified GeoTIFF
+            lc_path = os.path.join(out_dir, f"landcover_{year}.tif")
+            
+            meta.update(dtype="uint8", count=1, compress="lzw", tiled=True, blockxsize=256, blockysize=256)
+
+            with rasterio.open(lc_path, "w", **meta) as dst:
+                dst.write(classified, 1)
+                
+            print(f"💾 Land Cover saved: {lc_path}")
+            
+            # Compatibility copy for Web App (uses 2023)
+            if year == "2023":
+                 out_path = os.path.join(out_dir, "landcover_classified.tif")
+                 with rasterio.open(out_path, "w", **meta) as dst:
+                     dst.write(classified, 1)
+        else:
+            print(f"❌ Failed to find downloaded multiband TIFF for {year}")
 
 # ---------------------------
 # STATS MODULE (Accuracy & NDVI)
 # ---------------------------
-print("\n� Calculating Statistics...")
+print("\n📊 Calculating Statistics...")
 
 lc_2023_path = os.path.join(out_dir, "landcover_2023.tif")
 ref_path_explicit = "reference_landcover.tif" # Hypothetical
@@ -264,7 +281,7 @@ if os.path.exists(lc_2023_path) and os.path.exists(ndvi_2022_path) and os.path.e
         print(f"🔹 Using explicit reference: {ref_file}")
     elif os.path.exists(ref_path_fallback):
         ref_file = ref_path_fallback
-        print(f"� Using 2022 as reference (Temporal Stability): {ref_file}")
+        print(f"⏳ Using 2022 as reference (Temporal Stability): {ref_file}")
     else:
         ref_file = None
         print("⚠️ No reference file found for Accuracy Assessment.")
@@ -355,8 +372,9 @@ else:
 # ---------------------------
 print("\n🚀 Starting Web Visualization...")
 
-# Define the path to the app.py
-app_path = os.path.join(os.path.dirname(__file__), "webapp", "app.py")
+# Define the path to the app.py (Adjusted for repo structure)
+# Assuming app.py is in the same directory as api.py
+app_path = os.path.join(os.path.dirname(__file__), "app.py")
 
 # Open browser after a short delay to allow server to start
 def open_browser():
