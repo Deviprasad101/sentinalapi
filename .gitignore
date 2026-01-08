@@ -88,3 +88,8 @@ venv.bak/
 *.swp
 *.swo
 .DS_Store
+
+# Large Data Output
+*.tif
+*.tiff
+# Keep stats.json but ignore other generated json if needed (stats.json is small and useful)
